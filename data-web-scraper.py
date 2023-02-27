@@ -1,23 +1,14 @@
+import asyncio
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
 import requests
-import yaml
-from alive_progress import alive_bar as ab
-from azure.storage.blob import ContainerClient
 from bs4 import BeautifulSoup as bs
 from tqdm import tqdm as tq
 
 from azure_storage.azure_storage import AzureContainer
-
-DOMAIN = 'https://www.nyc.gov'
-URL = 'https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page'
-START_DATE = 2009
-END_DATE = 2022
-FILE_TYPE = '.parquet'
-DIR_PATH = 'data/'
 
 class BeautifulSoup:
 
@@ -26,132 +17,153 @@ class BeautifulSoup:
 
         return bs(requests.get(url).text, 'html.parser')
 
-
+@dataclass
 class Scraper(BeautifulSoup):
 
-    file_size = 0
+    url: str
+    date_range: tuple 
+    file_type: str
 
-    """ def scrape_file_size(self, files: list) -> int:
-        Scrapes the file size from the website
-
-        print('Getting file size...')
-        for scraped_link in tq(files):
-            res = requests.head(scraped_link)
-            self.file_size += int(res.headers['content-length'])
-        print(f'File size: {self.file_size} bytes')
-
-        # Asks if the user wants to continue downloading
-        continue_dowload = input('Do you want to continue? (y/n) ')
-        if continue_dowload == 'y':
-            return self.file_size
-        else:
-            print('Ok, bye!')
-            exit() """
-
-    def scrape_file_links(self, url: str) -> list:
+    def scrape_file_links(self) -> list:
         """Scrapes the file links from the website"""
 
+        # Get taxi type
+        taxi_type = input('What type of taxi do you want to download? (yellow, green, fhv) ')
+
+        # Get date range
+        start_date = self.date_range[0]
+        end_date = self.date_range[1]
+
+        # Get file links
         links = []
+
         print('Getting file links...')
-        for link in self._get_soup(url).find_all('a'):
-            for date in range(START_DATE, END_DATE):
+        for link in self._get_soup(self.url).find_all('a'):
+            for date in range(start_date, end_date + 1):
                 scraped_link = link.get('href')
-                if str(date) in scraped_link and FILE_TYPE in scraped_link:
+                if str(date) in scraped_link and self.file_type in scraped_link and taxi_type in scraped_link:
                     links.append(scraped_link)
                     print(f'Found: {scraped_link}')
         print(f'Found {len(links)} files')
         return links
     
+    
+@dataclass
+class FileTransfer(ABC, AzureContainer):
 
-class FileTransfer(ABC):
+    directory_path: str
+    file_links: list 
+    content_settings = AzureContainer.get_azure_content_settings
+    container_client = AzureContainer.get_container_client
 
     @abstractmethod
-    def transfer_file(self):
+    async def transfer_file(self):
         """Transfers the files"""
         pass
 
-    @abstractmethod
-    def transfer_prompt(self, transfer_type: str):
+    async def transfer_prompt(self, transfer_type: str):
         """Asks the user if they want to download the files
         """
 
         download = input(f'Do you want to {transfer_type} the files? (y/n) ')
 
         if download == 'y':
-            self.transfer_file()
+            await self.transfer_file()
         else:
             print('Ok, bye!')
 
 
-@dataclass
-class DownloadFile(FileTransfer, Scraper):
+class DownloadFile(FileTransfer):
 
-    url: str = ""
-
-    def transfer_file(self):
+    async def transfer_file(self):
         """Downloads the files"""
 
-        site = self.scrape_file_links(self.url)
-        #self.scrape_file_size(site)
-
         # Download files
-        for link in tq(site):
+        for link in tq(self.file_links):
             file_link = requests.get(link)
             with open("data/" + link.split('/')[-1], 'wb') as parquet_file:
                 parquet_file.write(file_link.content)
+
+                # 5 second delay to avoid throttling
+                await asyncio.sleep(5)
+                print("Cooling down...")
+
                 print(f'Downloaded: {link}')
 
-    def transfer_prompt(self):
-        super().transfer_prompt("download")
+    async def transfer_prompt(self, transfer_type: str):
+        await super().transfer_prompt(transfer_type)
 
 
 @dataclass
-class UploadFile(FileTransfer, AzureContainer):
+class UploadFile(FileTransfer):
 
-    file_download: DownloadFile = DownloadFile()
-
-    def get_files(self):
-        """Gets the files from the data folder"""
-
-        files = []
-        for file in os.listdir('data'):
-            if file.endswith(FILE_TYPE):
-                files.append(file)
-        return files
-
-    def transfer_file(self):
-
+    async def transfer_file(self):
         """Uploads the files"""
-        files = self.get_files()
 
-        print('Files already downloaded')
         print('Uploading files...')
 
-        for file in tq(files):
-            container_client = self.get_container_client()
-            blob_client = container_client.get_blob_client(file)
+        for file in tq(self.file_links):
+            blob_client = self.get_container_client().get_blob_client(file)
 
-            file_path = Path(DIR_PATH + file)
+            # 5 second delay to avoid throttling
+            await asyncio.sleep(5)
+            print("Cooling down...")
+
+            blob_client.upload_blob_from_url(file, overwrite=True)
+            print(f'Uploaded to azure: {file}')
+
+    async def transfer_prompt(self, transfer_type: str):
+        await super().transfer_prompt(transfer_type)
+
+    async def upload_from_local(self):
+        """Uploads the files from the local directory"""
+
+        for file in tq(self.file_links):
+            blob_client = self.container_client.get_blob_client(file)
+
+            file_path = Path(self.directory_path + file)
 
             with open(file_path, "rb") as data:
                 blob_client.upload_blob(data)
                 print(f'Uploaded to azure: {file_path}')
 
+                await asyncio.sleep(5)
+                print("Cooling down...")
+
                 os.remove(file_path)
                 print(f'Removed: {file_path}')
-      
-    def transfer_prompt(self):
-        super().transfer_prompt("upload")
+    
+    
+# Gets the date range
+def get_date_range() -> tuple:
+    """Gets the date range"""
 
+    start_date = int(input('What year do you want to start from? '))
+    end_date = int(input('What year do you want to end at? '))
+    return (start_date, end_date)
 
-def main() -> None:
-    scraper = Scraper()
-    download_file = DownloadFile(URL)
-    upload_file = UploadFile()
+async def main() -> None:
 
-    download_file.transfer_prompt()
-    upload_file.transfer_prompt()
+    # Constants
+    URL = 'https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page'
+    FILE_TYPE = '.parquet'
+    DIR_PATH = 'data/'
+
+    # Gets date range of files to scrape
+    date_range = get_date_range()
+
+    # Data scrapers
+    scraper = Scraper(date_range=date_range, url=URL, file_type=FILE_TYPE)
+    file_links = scraper.scrape_file_links()
+
+    # File transfers
+    download_file = DownloadFile(directory_path=DIR_PATH, file_links=file_links)
+    upload_file = UploadFile(directory_path=DIR_PATH, file_links=file_links)
+
+    # Prompts
+    #await download_file.transfer_prompt("download")
+    await upload_file.transfer_prompt("upload")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

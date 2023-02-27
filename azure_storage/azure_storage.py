@@ -1,4 +1,4 @@
-from azure.storage.blob import ContainerClient
+from azure.storage.blob import ContainerClient, ContentSettings
 import yaml
 
 class AzureContainer:
@@ -24,3 +24,11 @@ class AzureContainer:
         azure_config = self.load_config()
         azure_storage_path = azure_config['azure_storage_path']
         return azure_storage_path
+    
+    def get_azure_content_settings(self) -> ContentSettings:
+        """Gets the azure content settings"""
+
+        azure_config = self.load_config()
+        content_settings = ContentSettings(
+            content_type=azure_config['content_type'])
+        return content_settings

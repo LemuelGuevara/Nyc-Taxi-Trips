@@ -2,3 +2,4 @@
 azure_storage_connectionstring: "DefaultEndpointsProtocol=https;AccountName=datasciencecollege;AccountKey=dBuyNGB/l4VyREVDlgmm709lUUkBHEynfPgU7rZciSBq9jpqQOPjGo9Y7ZiQ0ID8bHpeMBjE60A/+AStl303QA==;EndpointSuffix=core.windows.net"
 dataset_nyc_container_name: "nyc-taxi-trips-data"
 source_folder: "./data"
+content_type: "binary/octet-stream"
