@@ -1,0 +1,7 @@
+name: NYC-Taxi-Trips
+channels:
+  - defaults
+dependencies:
+  - python=3.9.16
+  - ipykernel
+prefix: /Users/lemuelguevara/opt/anaconda3/envs/NYC-Taxi-Trips
